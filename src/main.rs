@@ -1,4 +1,4 @@
-use std::{iter, mem::discriminant};
+use std::{cell::RefCell, collections::HashMap, iter, mem::discriminant, rc::{Rc, Weak}};
 
 #[derive(Debug, Clone)]
 struct Position {
@@ -86,9 +86,9 @@ impl Tokenizer {
         (&slice[..end]).into()
     }
 
-    fn literal(&mut self) -> Result<String, TokenizeError> {
+    fn literal(&mut self, quote_char: char) -> Result<String, TokenizeError> {
         let slice = &self.html[self.index+1..];
-        println!("slice is {slice} {s}", s = self.index);
+        //println!("slice is {slice} {s}", s = self.index);
         if slice.len() == 0 {
             return Err(TokenizeError::UnclosedLiteral);
         }
@@ -110,8 +110,8 @@ impl Tokenizer {
                 check_escape = true;
             }
 
-            if c == '"' {
-                println!("========{}======", &slice[0..i]);
+            if c == quote_char {
+                //println!("========{}======", &slice[0..i]);
                 end = i;
                 break;
             }
@@ -121,7 +121,7 @@ impl Tokenizer {
 
         match end {
             0 => {
-                println!("slicez result is {result}");
+                //println!("slicez result is {result}");
                 Err(TokenizeError::UnclosedLiteral)
             },
             _ => Ok(result)
@@ -168,8 +168,8 @@ impl Tokenizer {
                     if c.is_alphanumeric() {
                         let id = self.identifier();
                         self.push_token(TokenType::Identifier, id, position);
-                    } else if c == '"' {
-                        let id = self.literal()?;
+                    } else if c == '"' || c == '\'' {
+                        let id = self.literal(c)?;
                         self.push_token(TokenType::Literal, id, position)
                     } else {
                         return Err(TokenizeError::UnexpectedChar(c));
@@ -241,10 +241,10 @@ impl<'a> Parser<'a> {
         self.current -= 1;
     }
 
-    fn expect(&mut self, token_type: TokenType) -> Result<(), ParseError> {
+    fn expect(&mut self, token_type: TokenType) -> Result<&Token, ParseError> {
         if self.check(token_type.clone()) {
             self.advance();
-            Ok(())
+            Ok(self.previous())
         } else {
             if let Some(tok) =  self.peek() {
                 Err(ParseError::UnexpectedToken(
@@ -260,43 +260,59 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn attributes(&mut self) -> bool {
+    fn attributes(&mut self) -> (bool, HashMap<String, String>) {
+        let mut attrs = HashMap::new();
         loop {
             if self.check(TokenType::RightAngle) {
-                return false;
+                return (false, attrs);
             }
             if self.check(TokenType::Stroke) {
                 self.advance();
-                return  true;
+                return  (true,attrs);
             }
 
-            self.expect(TokenType::Identifier);
-            self.expect(TokenType::Equals);
-            self.match_tokens(&[TokenType::Identifier, TokenType::Literal]);
+
+            let key = self.expect(TokenType::Identifier).expect("attribute name");
+            let key = key.content.clone();
+            self.expect(TokenType::Equals).expect("=");
+            let value = if self.match_tokens(&[TokenType::Identifier, TokenType::Literal]) {
+                self.previous().content.clone()
+            } else {
+                panic!("attribute without a value")
+            };
+
+            attrs.insert(key, value);
         }
     }
 
-    fn tag(&mut self) {
+    fn tag(&mut self) -> Rc<RefCell<Node>> {
         self.expect(TokenType::LeftAngle).expect("open tag");     // <  
-        self.expect(TokenType::Identifier).expect("tag name");    // h1  
-        let closed = self.attributes();                         // a="a" b= "b" | /
+        let tag_name = self.expect(TokenType::Identifier).expect("tag name"); 
+        let tag_name = tag_name.content.clone();   // h1  
+        let (closed, attributes) = self.attributes();                         // a="a" b= "b" | /
         self.expect(TokenType::RightAngle).expect("close tag");   // > 
 
+        let mut element = Rc::new(RefCell::new(Node::new(tag_name)));
+
         if closed {
-            return;
+            (*element).borrow_mut().node_type = NodeType::Element(Metadata{ attributes });
+            return element;
         }
 
         if self.match_tokens(&[TokenType::Identifier]) {
-
-        }
-        
-        if self.match_tokens(&[TokenType::LeftAngle]) {
+            (*element).borrow_mut().node_type = NodeType::Text(self.previous().content.clone())
+        } else if self.match_tokens(&[TokenType::LeftAngle]) {
+            (*element).borrow_mut().node_type = NodeType::Element(Metadata{ attributes });
             if self.check(TokenType::Stroke) {
                 self.back();
             } else {
                 self.back();
                 loop {
-                    self.tag();
+                    let new_element = self.tag();
+                    (*new_element).borrow_mut().parent = Some(Rc::downgrade(&element));
+                    element.borrow_mut().children.push(
+                        new_element
+                    );
 
                     if self.match_tokens(&[TokenType::LeftAngle]) {
                         if self.check(TokenType::Stroke) {
@@ -314,16 +330,49 @@ impl<'a> Parser<'a> {
         self.expect(TokenType::Identifier).expect("tag name");      // h1
         self.expect(TokenType::RightAngle).expect("close tag");     // >
 
+        element
+
     }
 
-    fn parse(&mut self) -> Result<(), ParseError> {
+    fn parse(&mut self) -> Result<Rc<RefCell<Node>>, ParseError> {
         //self.expect(TokenType::LeftAngle).unwrap();
         Ok(self.tag())
     }
 }
+
+#[derive(Debug)]
+struct Metadata {
+    attributes: HashMap<String, String>,
+}
+
+#[derive(Debug)]
+enum NodeType {
+    Text(String),
+    Element(Metadata)
+}
+
+#[derive(Debug)]
+struct Node {
+    tag_name: String,
+    children: Vec<Rc<RefCell<Node>>>,
+    parent: Option<Weak<RefCell<Node>>>,
+    node_type: NodeType
+}
+
+impl Node {
+    fn new(tag_name: String) -> Self {
+        Self {
+            tag_name,
+            children: vec![],
+            parent: None,
+            node_type: NodeType::Text("".into())
+        }
+    }
+}
+
 fn main() {
     let html = r#"
-    <world one="two" three="four">
+    <world one='two' three="four">
         <h1 five=six>
         <h1>
         <h1>
@@ -333,13 +382,16 @@ fn main() {
         <h1></h1>
         </h1>
         </h1>
+        <footer/>
     </cow>"#;
 
-    println!("{html}");
+    //println!("{html}");
 
     let mut t = Tokenizer::new(html.into());
-    let tokens = t.tokenize().expect("tokenize is ok");
-    println!("{:#?}", t.tokens);
+    t.tokenize().expect("tokenize is ok");
+    //println!("{:#?}", t.tokens);
     let mut parser = Parser::new(&t.tokens);
-    parser.parse().expect("parse should not suc");
+    let dom = parser.parse().expect("parse should not suc");
+
+    println!("{:#?}", dom);
 }
