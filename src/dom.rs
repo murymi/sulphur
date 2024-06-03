@@ -1,4 +1,4 @@
-use std::{cell::RefCell, ops::Deref, rc::Rc, str::FromStr};
+use std::{cell::RefCell, rc::Rc, str::FromStr};
 
 use parser::{ParseError, TokenizeError, Tokenizer};
 

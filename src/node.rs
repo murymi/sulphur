@@ -32,7 +32,7 @@ impl ToString for Node {
     fn to_string(&self) -> String {
         let mut attribute_string = String::new();
         for (key, value) in self.attributes.iter() {
-            attribute_string.push_str(format!("{key}=\"{value}\"").as_str());
+            attribute_string.push_str(format!("{key}='{value}'").as_str());
         }
 
         if self.children.len() > 0 {

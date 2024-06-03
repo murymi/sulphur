@@ -14,9 +14,9 @@ use parser::Parser;
 
 fn main() {
     let html = r#"<a one="two">
-    <one>one in a million</one>
-    <one>one in a million</one>
-    <one>one in a million</one>
+    <one pos="one">one in a million</one>
+    <one pos="two">one in a million</one>
+    <one pos=three>one in a million</one>
     </a>"#;
     // <world one='two' three="four">
     //     <h1 five=six>

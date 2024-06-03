@@ -1,3 +1,5 @@
+#[allow(unused, dead_code)]
+
 pub use std::{cell::RefCell, collections::HashMap, mem::discriminant, rc::Rc};
 
 use crate::{Node, NodeType};
@@ -9,7 +11,9 @@ pub(crate) struct Parser<'a> {
 
 #[derive(Debug)]
 pub(crate) enum ParseError {
+    #[allow(unused)]
     UnexpectedToken(TokenType, Position),
+    #[allow(unused)]
     UnclosedTag(String, Position),
     UnexpectedEndOfFile
 }
@@ -108,7 +112,7 @@ impl<'a> Parser<'a> {
         self.expect(TokenType::RightAngle)?;   // > 
         let element = Rc::new(RefCell::new(Node::new(tag_name.clone())));
         element.borrow_mut().attributes = attributes;
-        
+
         if closed {
             (*element).borrow_mut().node_type = NodeType::Element;
             return Ok(element);
@@ -222,6 +226,7 @@ impl Token {
 pub(crate) enum TokenizeError {
     UnclosedLiteral,
     UnexpectedEndOfLine,
+    #[allow(unused)]
     UnexpectedChar(char, Position),
     UnexpectedEndOfFile
 }
