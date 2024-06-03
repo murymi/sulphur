@@ -43,6 +43,7 @@ enum TokenizeError {
     UnclosedLiteral,
     UnexpectedEndOfLine,
     UnexpectedChar(char, Position),
+    UnexpectedEndOfFile
 }
 
 struct Tokenizer {
@@ -66,9 +67,14 @@ impl Tokenizer {
         }
     }
 
-    fn advance(&mut self, step:usize) {
-        self.index += step;
-        self.current_column += step;
+    fn advance(&mut self, step:usize) -> Result<(), TokenizeError> {
+        if self.more_tokens() {
+            self.index += step;
+            self.current_column += step;
+            Ok(())
+        } else {
+            Err(TokenizeError::UnexpectedEndOfFile)
+        }
     } 
 
     fn  next_line(&mut self) {
@@ -113,26 +119,43 @@ impl Tokenizer {
             }
 
             if c == quote_char {
-                //println!("========{}======", &slice[0..i]);
                 end = i;
                 break;
             }
         }
         let result = (&slice[0..end]).to_string();
-        self.advance(2);
+        self.advance(2)?;
 
         match end {
             0 => {
-                //println!("slicez result is {result}");
                 Err(TokenizeError::UnclosedLiteral)
             },
             _ => Ok(result)
         }
     }
 
-    fn push_token(&mut self, token_type:TokenType, content:String, position:Position) {
-        self.advance(content.len());
-        self.tokens.push(Token::new(token_type, position, content))
+    fn push_token(&mut self, token_type:TokenType, content:String, position:Position) -> Result<(), TokenizeError>{
+        self.advance(content.len())?;
+        Ok(self.tokens.push(Token::new(token_type, position, content)))
+    }
+
+    fn more_tokens(&self) -> bool {
+        self.html.len() > self.index
+    }
+
+    fn skip_comment(&mut self) -> Result<(), TokenizeError> {
+        let mut chars = &self.html[self.index..];
+        while !chars.starts_with("-->") && self.more_tokens() {
+            self.index += 1;
+            chars = &self.html[self.index..];
+        }
+
+        return if self.more_tokens() {
+            self.advance(3)
+        } else {
+            Err(TokenizeError::UnexpectedEndOfFile)
+        }
+
     }
 
     fn tokenize(&mut self) -> Result<(), TokenizeError> {
@@ -143,42 +166,47 @@ impl Tokenizer {
             
             match c {
                 '<' => {
-                    self.in_tag = true;
-                    self.push_token(TokenType::LeftAngle, c.into(), position);
+                    if (&self.html[self.index..]).starts_with("<!--") {
+                        self.advance(4)?;
+                        self.skip_comment()?;
+                    } else {
+                        self.in_tag = true;
+                        self.push_token(TokenType::LeftAngle, c.into(), position)?;
+                    }
                 }
                 '>' => {
                     self.in_tag = false;
-                    self.push_token(TokenType::RightAngle, c.into(), position);
+                    self.push_token(TokenType::RightAngle, c.into(), position)?;
                 }
                 '/' => {
-                    self.push_token(TokenType::Stroke, c.into(), position);
+                    self.push_token(TokenType::Stroke, c.into(), position)?;
 
                 }
                 '=' => {
-                    self.push_token(TokenType::Equals, c.into(), position);
+                    self.push_token(TokenType::Equals, c.into(), position)?;
                 },
                 '!' => {
-                    self.push_token(TokenType::Bang, c.into(), position);
+                    self.push_token(TokenType::Bang, c.into(), position)?;
                 },
                 '-' => {
-                    self.push_token(TokenType::Dash, c.into(), position);
+                    self.push_token(TokenType::Dash, c.into(), position)?;
                 },
                 ' ' => {
-                    self.advance(1);
+                    self.advance(1)?;
                     continue;
                 }
                 '\n' => {
-                    self.advance(1);
+                    self.advance(1)?;
                     self.next_line();
                     continue;
                 }
                 _ => {
                     if c.is_alphanumeric() {
                         let id = self.identifier();
-                        self.push_token(TokenType::Identifier, id, position);
+                        self.push_token(TokenType::Identifier, id, position)?;
                     } else if c == '"' || c == '\'' {
                         let id = self.literal(c)?;
-                        self.push_token(TokenType::Literal, id, position)
+                        self.push_token(TokenType::Literal, id, position)?;
                     } else {
                         return Err(TokenizeError::UnexpectedChar(c, position));
                     }
@@ -198,8 +226,8 @@ struct Parser<'a> {
 #[derive(Debug)]
 enum ParseError {
     UnexpectedToken(TokenType, Position),
-    UnclosedTag(TokenType, Position),
-    Eof
+    UnclosedTag(String, Position),
+    UnexpectedEndOfFile
 }
 
 impl<'a> Parser<'a> {
@@ -255,7 +283,7 @@ impl<'a> Parser<'a> {
             if let Some(tok) =  self.peek() {
                 Err(ParseError::UnexpectedToken(tok.token_type.clone(), tok.position.clone()))
             } else {
-                Err(ParseError::Eof)
+                Err(ParseError::UnexpectedEndOfFile)
             }
         }
     }
@@ -294,11 +322,12 @@ impl<'a> Parser<'a> {
         let tag_name = tag.content.clone();   // h1  
         let (closed, attributes) = self.attributes()?;                         // a="a" b= "b" | /
         self.expect(TokenType::RightAngle)?;   // > 
-        let mut element = Rc::new(RefCell::new(Node::new(tag_name.clone())));
+        let element = Rc::new(RefCell::new(Node::new(tag_name.clone())));
         if closed {
             (*element).borrow_mut().node_type = NodeType::Element(Metadata{ attributes });
             return Ok(element);
         }
+        
         if self.match_tokens(&[TokenType::Identifier]) {
             (*element).borrow_mut().node_type = NodeType::Text(self.previous().content.clone())
         } else if self.match_tokens(&[TokenType::LeftAngle]) {
@@ -308,7 +337,19 @@ impl<'a> Parser<'a> {
             } else {
                 self.back();
                 loop {
-                    let new_element = self.tag()?;
+                    let new_element = match self.tag() {
+                        Ok(v) => v,
+                        Err(e) => {
+                            if discriminant(&e) == discriminant(&ParseError::UnexpectedEndOfFile) {
+                                return Err(ParseError::UnclosedTag(tag_name, tag_pos));
+                            } else {
+                                return Err(e);
+                            }
+                        }
+                        //Err(ParseError::UnexpectedEndOfFile) => 
+                    };
+
+                    //println!("=========={}============", tag_name);
                     (*new_element).borrow_mut().parent = Some(Rc::downgrade(&element));
                     element.borrow_mut().children.push(
                         new_element
@@ -324,15 +365,18 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+        
 
-        self.expect(TokenType::LeftAngle)?;       // <
+        if let Err(ParseError::UnexpectedEndOfFile) = self.expect(TokenType::LeftAngle) {
+            return Err(ParseError::UnclosedTag(tag_name, tag_pos));
+        };       // <
         self.expect(TokenType::Stroke)?;             // /
         let close_tag = self.expect(TokenType::Identifier)?;
         let close_tag_name = close_tag.content.clone();      // h1
         if close_tag_name != tag_name {
-            return Err(ParseError::UnclosedTag(tag_type, tag_pos));
+            return Err(ParseError::UnclosedTag(tag_name, tag_pos));
         }
-        self.expect(TokenType::RightAngle).expect("close tag");     // >
+        self.expect(TokenType::RightAngle)?;     // >
 
         Ok(element)
 
@@ -385,21 +429,20 @@ impl Node {
 }
 
 fn main() {
-    let html = r#"<!Doctype html> <bar/>"#;
-    //
-    //<world one='two' three="four">
-    //    <h1 five=six>
-    //    <h1>
-    //    <h1>
-    //    <p>hello world ghasia</p>
-    //    </h1>
-    //    <h1></h1>
-    //    <h1></h1>
-    //    </h1>
-    //    </h1>
-    //    <footer/>
-    //</world>"#;
-//
+    let html = r#"<a><b/></a>"#;
+    // <world one='two' three="four">
+    //     <h1 five=six>
+    //     <h1>
+    //     <h1>
+    //     <p>hello world ghasia</p>
+    //     </h1>
+    //     <h1></h1>
+    //     <h1></h1>
+    //     </h1>
+    //     </h1>
+    //     <footer/>
+    // </world>"#;
+
     //println!("{html}");
 
     let mut t = Tokenizer::new(html.into());
