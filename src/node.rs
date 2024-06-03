@@ -15,7 +15,7 @@ pub struct Node {
     pub children: Rc<RefCell<Vec<Rc<RefCell<Node>>>>>,
     pub parent: Option<Weak<RefCell<Node>>>,
     pub node_type: NodeType,
-    pub attributes: HashMap<String, String>
+    pub attributes: Rc<RefCell<HashMap<String, String>>>
 }
 
 impl Node {
@@ -25,7 +25,7 @@ impl Node {
             children: Rc::new(RefCell::new(vec![])),
             parent: None,
             node_type: NodeType::Text(RefCell::new("".into())),
-            attributes: HashMap::new()
+            attributes: Rc::new(RefCell::new(HashMap::new()))
         }
     }
 
@@ -42,7 +42,7 @@ impl Node {
 
     pub fn get_element_by_attribute(&self, key: &str, value: &str) -> Option<Rc<RefCell<Node>>> {
         for child in self.children.deref().borrow().iter() {
-            if let Some(val) = child.deref().borrow().attributes.get(key) {
+            if let Some(val) = child.deref().borrow().attributes.borrow().get(key) {
                 if val == value {
                     return Some(child.clone());
                 }
@@ -54,7 +54,7 @@ impl Node {
     pub fn get_elements_by_attribute(&self, key: &str, value: &str) -> Vec<Rc<RefCell<Node>>> {
         let mut elements = vec![];
         for child in self.children.deref().borrow().iter() {
-            if let Some(val) = child.deref().borrow().attributes.get(key) {
+            if let Some(val) = child.deref().borrow().attributes.borrow().get(key) {
                 if val == value {
                     elements.push(child.clone());
                 }
@@ -84,12 +84,16 @@ impl Node {
             }
         }
     }
+
+    fn get_attributes(&mut self) -> Rc<RefCell<HashMap<String, String>>> {
+        self.attributes.clone()
+    }
 }
 
 impl ToString for Node {
     fn to_string(&self) -> String {
         let mut attribute_string = String::new();
-        for (key, value) in self.attributes.iter() {
+        for (key, value) in self.attributes.borrow().iter() {
             attribute_string.push_str(format!("{key}='{value}'").as_str());
         }
 

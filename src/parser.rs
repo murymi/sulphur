@@ -111,7 +111,7 @@ impl<'a> Parser<'a> {
         let (closed, attributes) = self.attributes()?;                         // a="a" b= "b" | /
         self.expect(TokenType::RightAngle)?;   // > 
         let element = Rc::new(RefCell::new(Node::new(tag_name.clone())));
-        element.borrow_mut().attributes = attributes;
+        element.borrow_mut().attributes = Rc::new(RefCell::new(attributes));
 
         if closed {
             (*element).borrow_mut().node_type = NodeType::Element;

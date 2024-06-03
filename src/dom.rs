@@ -30,7 +30,6 @@ impl FromStr for Dom {
             Ok(t) => t,
             Err(e) => return Err(DomError::ParseError(e)),
         };
-
         Ok(Self {tree})
     }
 }
