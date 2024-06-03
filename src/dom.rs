@@ -12,7 +12,8 @@ pub struct Dom {
 #[derive(Debug)]
 pub enum DomError {
     TokenizeError(TokenizeError),
-    ParseError(ParseError)
+    ParseError(ParseError),
+    BlockedAppend(String)
 }
 
 impl FromStr for Dom {

@@ -119,7 +119,7 @@ impl<'a> Parser<'a> {
         }
         
         if self.match_tokens(&[TokenType::Identifier]) {
-            (*element).borrow_mut().node_type = NodeType::Text(self.previous().content.clone())
+            (*element).borrow_mut().node_type = NodeType::Text(RefCell::new(self.previous().content.clone()))
         } else if self.match_tokens(&[TokenType::LeftAngle]) {
             (*element).borrow_mut().node_type = NodeType::Element;
             if self.check(TokenType::Stroke) {
@@ -138,7 +138,7 @@ impl<'a> Parser<'a> {
                         }
                     };
                     (*new_element).borrow_mut().parent = Some(Rc::downgrade(&element));
-                    element.borrow_mut().children.push(
+                    element.borrow_mut().children.borrow_mut().push(
                         new_element
                     );
 
