@@ -14,6 +14,8 @@ enum TokenType {
     Equals,
     Identifier,
     Literal,
+    Bang,
+    Dash,
     Eof
 }
 
@@ -40,7 +42,7 @@ impl Token {
 enum TokenizeError {
     UnclosedLiteral,
     UnexpectedEndOfLine,
-    UnexpectedChar(char),
+    UnexpectedChar(char, Position),
 }
 
 struct Tokenizer {
@@ -154,7 +156,13 @@ impl Tokenizer {
                 }
                 '=' => {
                     self.push_token(TokenType::Equals, c.into(), position);
-                }
+                },
+                '!' => {
+                    self.push_token(TokenType::Bang, c.into(), position);
+                },
+                '-' => {
+                    self.push_token(TokenType::Dash, c.into(), position);
+                },
                 ' ' => {
                     self.advance(1);
                     continue;
@@ -172,7 +180,7 @@ impl Tokenizer {
                         let id = self.literal(c)?;
                         self.push_token(TokenType::Literal, id, position)
                     } else {
-                        return Err(TokenizeError::UnexpectedChar(c));
+                        return Err(TokenizeError::UnexpectedChar(c, position));
                     }
                 }
             };
@@ -331,6 +339,17 @@ impl<'a> Parser<'a> {
     }
 
     fn parse(&mut self) -> Result<Rc<RefCell<Node>>, ParseError> {
+        if self.match_tokens(&[TokenType::LeftAngle]) {
+            if self.check(TokenType::Bang) {
+                while !self.check(TokenType::RightAngle) {
+                    self.advance();
+                }
+                self.advance();
+            } else {
+                self.back();
+            }
+        }
+
         self.tag()
     }
 }
@@ -366,20 +385,21 @@ impl Node {
 }
 
 fn main() {
-    let html = r#"
-    <world one='two' three="four">
-        <h1 five=six>
-        <h1>
-        <h1>
-        <p>hello world ghasia</p>
-        </h1>
-        <h1></h1>
-        <h1></h1>
-        </h1>
-        </h1>
-        <footer/>
-    </world>"#;
-
+    let html = r#"<!Doctype html> <bar/>"#;
+    //
+    //<world one='two' three="four">
+    //    <h1 five=six>
+    //    <h1>
+    //    <h1>
+    //    <p>hello world ghasia</p>
+    //    </h1>
+    //    <h1></h1>
+    //    <h1></h1>
+    //    </h1>
+    //    </h1>
+    //    <footer/>
+    //</world>"#;
+//
     //println!("{html}");
 
     let mut t = Tokenizer::new(html.into());
