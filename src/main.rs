@@ -189,16 +189,14 @@ struct Parser<'a> {
 
 #[derive(Debug)]
 enum ParseError {
-    UnexpectedToken(TokenType, Position, String),
-    Eof(String)
+    UnexpectedToken(TokenType, Position),
+    UnclosedTag(TokenType, Position),
+    Eof
 }
 
 impl<'a> Parser<'a> {
     fn new(tokens:&'a Vec<Token>) -> Self {
-        Self {
-            current:0,
-            tokens
-        }
+        Self { current: 0, tokens }
     }
 
     fn peek(&self) -> Option<&Token> {
@@ -247,58 +245,52 @@ impl<'a> Parser<'a> {
             Ok(self.previous())
         } else {
             if let Some(tok) =  self.peek() {
-                Err(ParseError::UnexpectedToken(
-                    tok.token_type.clone(),
-                    tok.position.clone(),
-                    format!("{}:{}: Expected {:?} found {:?}",tok.position.line, tok.position.col, token_type, tok.token_type)
-                ))
+                Err(ParseError::UnexpectedToken(tok.token_type.clone(), tok.position.clone()))
             } else {
-                Err(ParseError::Eof(
-                    format!("Unexpected end of file")
-                ))
+                Err(ParseError::Eof)
             }
         }
     }
 
-    fn attributes(&mut self) -> (bool, HashMap<String, String>) {
+    fn attributes(&mut self) -> Result<(bool, HashMap<String, String>),ParseError> {
         let mut attrs = HashMap::new();
         loop {
             if self.check(TokenType::RightAngle) {
-                return (false, attrs);
+                return Ok((false, attrs));
             }
             if self.check(TokenType::Stroke) {
                 self.advance();
-                return  (true,attrs);
+                return  Ok((true,attrs));
             }
-
-
-            let key = self.expect(TokenType::Identifier).expect("attribute name");
+            let key = self.expect(TokenType::Identifier)?;
             let key = key.content.clone();
-            self.expect(TokenType::Equals).expect("=");
+            self.expect(TokenType::Equals)?;
             let value = if self.match_tokens(&[TokenType::Identifier, TokenType::Literal]) {
                 self.previous().content.clone()
             } else {
-                panic!("attribute without a value")
+                return Err(ParseError::UnexpectedToken(
+                    self.peek().unwrap().token_type.clone(),
+                    self.peek().unwrap().position.clone()
+                ))
             };
 
             attrs.insert(key, value);
         }
     }
 
-    fn tag(&mut self) -> Rc<RefCell<Node>> {
-        self.expect(TokenType::LeftAngle).expect("open tag");     // <  
-        let tag_name = self.expect(TokenType::Identifier).expect("tag name"); 
-        let tag_name = tag_name.content.clone();   // h1  
-        let (closed, attributes) = self.attributes();                         // a="a" b= "b" | /
-        self.expect(TokenType::RightAngle).expect("close tag");   // > 
-
-        let mut element = Rc::new(RefCell::new(Node::new(tag_name)));
-
+    fn tag(&mut self) -> Result<Rc<RefCell<Node>>,ParseError> {
+        self.expect(TokenType::LeftAngle)?;     // <  
+        let tag = self.expect(TokenType::Identifier)?; 
+        let tag_type = tag.token_type.clone();
+        let tag_pos = tag.position.clone();
+        let tag_name = tag.content.clone();   // h1  
+        let (closed, attributes) = self.attributes()?;                         // a="a" b= "b" | /
+        self.expect(TokenType::RightAngle)?;   // > 
+        let mut element = Rc::new(RefCell::new(Node::new(tag_name.clone())));
         if closed {
             (*element).borrow_mut().node_type = NodeType::Element(Metadata{ attributes });
-            return element;
+            return Ok(element);
         }
-
         if self.match_tokens(&[TokenType::Identifier]) {
             (*element).borrow_mut().node_type = NodeType::Text(self.previous().content.clone())
         } else if self.match_tokens(&[TokenType::LeftAngle]) {
@@ -308,7 +300,7 @@ impl<'a> Parser<'a> {
             } else {
                 self.back();
                 loop {
-                    let new_element = self.tag();
+                    let new_element = self.tag()?;
                     (*new_element).borrow_mut().parent = Some(Rc::downgrade(&element));
                     element.borrow_mut().children.push(
                         new_element
@@ -325,18 +317,21 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.expect(TokenType::LeftAngle).expect("open tag");       // <
-        self.expect(TokenType::Stroke).expect("slash");             // /
-        self.expect(TokenType::Identifier).expect("tag name");      // h1
+        self.expect(TokenType::LeftAngle)?;       // <
+        self.expect(TokenType::Stroke)?;             // /
+        let close_tag = self.expect(TokenType::Identifier)?;
+        let close_tag_name = close_tag.content.clone();      // h1
+        if close_tag_name != tag_name {
+            return Err(ParseError::UnclosedTag(tag_type, tag_pos));
+        }
         self.expect(TokenType::RightAngle).expect("close tag");     // >
 
-        element
+        Ok(element)
 
     }
 
     fn parse(&mut self) -> Result<Rc<RefCell<Node>>, ParseError> {
-        //self.expect(TokenType::LeftAngle).unwrap();
-        Ok(self.tag())
+        self.tag()
     }
 }
 
@@ -383,7 +378,7 @@ fn main() {
         </h1>
         </h1>
         <footer/>
-    </cow>"#;
+    </world>"#;
 
     //println!("{html}");
 
